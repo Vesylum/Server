@@ -1,13 +1,10 @@
 {
-  "name": "server",
+  "name": "@lostcityrs/server",
   "private": true,
-  "devDependencies": {
-    "@types/bun": "latest"
-  },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
-    "@inquirer/prompts": "^7.5.3"
+    "@inquirer/prompts": "7.10.1"
   }
 }

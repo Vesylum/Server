@@ -1,8 +1,10 @@
-import child_process from 'child_process';
-import fs from 'fs';
+'use strict';
 
-import { ExitPromptError } from '@inquirer/core';
-import { confirm, input, number, password, select } from '@inquirer/prompts';
+const child_process = require('child_process');
+const fs = require('fs');
+
+const { ExitPromptError } = require('@inquirer/core');
+const { select } = require('@inquirer/prompts');
 
 // if you're forking this feel free to change these :) it does make some assumptions elsewhere (branch names)
 const repoOrg = 'https://github.com/LostCityRS';
@@ -11,20 +13,20 @@ const contentRepo = 'Content';
 const webRepo = 'Client-TS';
 const javaRepo = 'Client-Java';
 
-function cloneRepo(repo: string, dir: string, branch: string) {
+function cloneRepo(repo, dir, branch) {
     child_process.execSync(`git clone ${repoOrg}/${repo} --single-branch -b ${branch} ${dir}`, {
         stdio: 'inherit'
     });
 }
 
-function updateRepo(cwd: string) {
+function updateRepo(cwd) {
     child_process.execSync('git pull', {
         stdio: 'inherit',
         cwd
     });
 }
 
-function runOnOs(exec: string, cwd?: string) {
+function runOnOs(exec, cwd) {
     const start = (process.platform == 'darwin' ? 'open' : process.platform == 'win32' ? 'start' : 'xdg-open');
 
     child_process.execSync(`${start} ${exec}`, {
@@ -35,6 +37,39 @@ function runOnOs(exec: string, cwd?: string) {
 
 let config = {
     rev: 'unset'
+};
+
+const revInfo = {
+    '225': {
+        description: 'May 18, 2004',
+        webclient: true
+    },
+    '244': {
+        description: 'June 28, 2004',
+        webclient: true
+    },
+    '245.2': {
+        description: 'July 13, 2004 (there were 3 "245" builds!)',
+        webclient: true
+    },
+    '254': {
+        description: 'September 7, 2004',
+        webclient: true
+    },
+    '274': {
+        description: 'November 23, 2004',
+        webclient: true
+    },
+    '289': {
+        description: 'January 17, 2005',
+        wip: true,
+        webclient: true
+    },
+    '377-wip': {
+        description: 'May 5, 2006',
+        wip: true,
+        clientBranch: '377'
+    }
 };
 
 let running = true;
@@ -53,16 +88,22 @@ async function main() {
         cloneRepo(contentRepo, 'content', config.rev);
     }
 
-    if (!fs.existsSync('webclient')) {
+    if (revInfo[config.rev]?.webclient && !fs.existsSync('webclient')) {
         cloneRepo(webRepo, 'webclient', config.rev);
     }
 
     if (!fs.existsSync('javaclient')) {
-        cloneRepo(javaRepo, 'javaclient', config.rev);
+        cloneRepo(javaRepo, 'javaclient', revInfo[config.rev]?.clientBranch ?? config.rev);
     }
 
-    if (!fs.existsSync('engine/.env')) {
-        child_process.spawnSync('bun run setup', {
+    if (!fs.existsSync('engine/.env') && !fs.existsSync('engine/data/config/world.json')) {
+        child_process.spawnSync('npm install', {
+            shell: true,
+            stdio: 'inherit',
+            cwd: 'engine'
+        });
+
+        child_process.spawnSync('npm run setup', {
             shell: true,
             stdio: 'inherit',
             cwd: 'engine'
@@ -79,11 +120,17 @@ async function main() {
             name: 'Update Source',
             description: 'Pull the latest commits for all subprojects',
             value: 'update'
-        }, {
+        },
+        revInfo[config.rev]?.webclient ? {
             name: 'Run Web Client',
             description: 'Opens your browser to play using the modern web client (TypeScript)',
             value: 'web'
-        }, {
+        } : {
+            name: 'Run Web Client (unavailable)',
+            description: 'Not available in this version.',
+            value: ''
+        },
+        {
             name: 'Run Java Client',
             description: 'Opens the legacy Java applet to play using the original client',
             value: 'java'
@@ -99,7 +146,7 @@ async function main() {
     }, { clearPromptOnDone: true });
 
     if (choice === 'start') {
-        child_process.execSync('bun start', {
+        child_process.execSync('npm start', {
             stdio: 'inherit',
             cwd: 'engine'
         });
@@ -109,16 +156,26 @@ async function main() {
         updateRepo('webclient');
         updateRepo('javaclient');
     } else if (choice === 'web') {
-        if (process.platform === 'win32' || process.platform === 'darwin') {
+        if (!revInfo[config.rev]?.webclient) {
+            console.log('This version does not have a webclient available (yet?), sorry.');
+        } else if (process.platform === 'win32' || process.platform === 'darwin') {
             runOnOs('http://localhost/rs2.cgi');
         } else {
             runOnOs('http://localhost:8888/rs2.cgi');
         }
     } else if (choice === 'java') {
-        child_process.execSync('gradlew run --args="10 0 highmem members"', {
-            stdio: 'inherit',
-            cwd: 'javaclient'
-        });
+        const command = process.platform === 'win32' ? 'gradlew' : './gradlew';
+        if (config.rev === '225') {
+            child_process.execSync(`${command} run --args="10 0 highmem members"`, {
+                stdio: 'inherit',
+                cwd: 'javaclient'
+            });
+        } else {
+            child_process.execSync(`${command} run --args="10 0 highmem members 32"`, {
+                stdio: 'inherit',
+                cwd: 'javaclient'
+            });
+        }
     } else if (choice === 'advanced') {
         await promptAdvanced();
     } else if (choice === 'quit') {
@@ -127,16 +184,26 @@ async function main() {
 }
 
 async function promptConfig() {
+    const orderedRevs = Object.entries(revInfo);
+    orderedRevs.sort((a, b) => parseInt(a[0]) - parseInt(b[0])); // descending revs
+    orderedRevs.sort((a, b) => a[1].wip ? 1 : -1); // wip last
+
+    let choices = [];
+    for (const [rev, info] of orderedRevs) {
+        choices.push({
+            name: info.wip ? `${rev} (DEVELOPERS ONLY)` : rev,
+            value: rev,
+            description: info.description
+        });
+    }
+
     const rev = await select({
         message: 'What version are you interested in?',
-        choices: [{
-            name: '225',
-            description: 'May 18, 2004',
-            value: '225'
-        }]
+        choices
     }, { clearPromptOnDone: true });
 
     config.rev = rev;
+
     fs.writeFileSync('server.json', JSON.stringify(config, null, 2));
 }
 
@@ -148,22 +215,31 @@ async function promptAdvanced() {
             description: 'Starts the server and watches for .ts file changes to reload',
             value: 'start-dev'
         }, {
-        // todo:
-        //     name: 'Reconfigure Server',
-        //     description: 'Edit the environment config for the server',
-        //     value: 'configure'
-        // }, {
+             name: 'Reconfigure Server',
+             description: 'Edit the environment config for the server',
+             value: 'configure'
+        }, {
             name: 'Clean-build Server',
             description: '',
             value: 'clean-build'
-        }, {
+        },
+        revInfo[config.rev]?.webclient ? {
             name: 'Build Web Client',
             description: '',
             value: 'build-web'
-        }, {
+        } : {
+            name: 'Build Web Client (unavailable)',
+            description: 'Not available in this version.',
+            value: ''
+        },
+        {
             name: 'Build Java Client',
             description: '',
             value: 'build-java'
+        }, {
+            name: 'Change Version',
+            description: 'THIS OPTION WILL DESTROY YOUR WORKING FOLDER AND CREATE A NEW ONE.',
+            value: 'change-version'
         }, {
             name: 'Back',
             description: 'Go back',
@@ -172,55 +248,65 @@ async function promptAdvanced() {
     }, { clearPromptOnDone: true });
 
     if (choice === 'start-dev') {
-        child_process.execSync('bun run dev', {
+        child_process.execSync('npm run dev', {
             stdio: 'inherit',
             cwd: 'engine'
         });
     } else if (choice === 'configure') {
-        // todo: has issues with input appearing right now
-        child_process.spawnSync('bun run setup', {
+        child_process.spawnSync('npm run setup', {
             shell: true,
             stdio: 'inherit',
             cwd: 'engine'
         });
     } else if (choice === 'clean-build') {
-        child_process.execSync('bun run clean', {
+        child_process.execSync('npm run clean', {
             stdio: 'inherit',
             cwd: 'engine'
         });
 
-        child_process.execSync('bun run build', {
+        child_process.execSync('npm run build', {
             stdio: 'inherit',
             cwd: 'engine'
         });
     } else if (choice === 'build-web') {
-        child_process.execSync('bun run build', {
+        child_process.execSync('npm run build', {
             stdio: 'inherit',
             cwd: 'webclient'
         });
 
         fs.copyFileSync('webclient/out/client.js', 'engine/public/client/client.js');
-        fs.copyFileSync('webclient/out/deps.js', 'engine/public/client/deps.js');
     } else if (choice === 'build-java') {
-        child_process.execSync('gradlew build', {
+        const command = process.platform === 'win32' ? 'gradlew' : './gradlew';
+        child_process.execSync(`${command} build`, {
             stdio: 'inherit',
             cwd: 'javaclient'
         });
+    } else if (choice === 'change-version') {
+        await promptConfig();
+
+        fs.rmSync('engine', { recursive: true, force: true });
+        fs.rmSync('content', { recursive: true, force: true });
+        fs.rmSync('webclient', { recursive: true, force: true });
+        fs.rmSync('javaclient', { recursive: true, force: true });
     }
 }
 
-try {
-    while (running) {
-        await main();
-    }
-} catch (e) {
-    if (e instanceof ExitPromptError) {
-        process.exit(0);
-    } else if (e instanceof Error) {
-        if (e.message.startsWith('Command failed:')) {
-            process.exit(0);
+async function run() {
+    try {
+        while (running) {
+            await main();
         }
+    } catch (e) {
+        if (e instanceof ExitPromptError) {
+            process.exit(0);
+        } else if (e instanceof Error) {
+            if (e.message.startsWith('Command failed:')) {
+                process.exit(0);
+            }
 
-        console.log(e.message);
+            console.log(e.message);
+        }
     }
 }
+
+run();

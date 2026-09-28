@@ -6,41 +6,17 @@ if errorlevel 1 (
     exit /b
 )
 
-where /q node
+where /q npm
 if errorlevel 1 (
-    echo You must install Node to proceed: https://nodejs.org/en
+    echo You must install Node.js to proceed: https://nodejs.org
     exit /b
 )
 
 for /f "tokens=2 delims=v." %%i in ('node -v') do set "node_major=%%i"
-if %node_major% lss 22 (
-    echo Node 22 or newer is required. Detected %node_major%
-    exit /b
+if %node_major% lss 24 (
+    echo Node.js 24 or newer is required. Detected %node_major%
+    exit /b 1
 )
 
-where /q bun
-if errorlevel 1 (
-    npm i -g bun
-)
-
-where /q bun
-if errorlevel 1 (
-    echo You must install Bun to proceed: https://bun.sh
-    exit /b
-)
-
-where /q java
-if errorlevel 1 (
-    echo You must install Java 17 or newer to proceed: https://adoptium.net/
-    exit /b
-)
-
-for /f tokens^=2-5^ delims^=.-_^" %%j in ('java -fullversion 2^>^&1') do set "jver=%%j%%k%"
-if %jver% lss 170 (
-    echo You must install Java 17 or newer to proceed: https://adoptium.net/
-    echo And it must be your primary Java version!
-    exit /b
-)
-
-bun install
-bun run start.ts
+npm install
+node start.js
